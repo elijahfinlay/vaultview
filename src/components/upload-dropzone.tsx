@@ -22,7 +22,7 @@ const ALLOWED_TYPES = [
   "image/gif",
   "image/avif",
 ];
-const MAX_SIZE = 20 * 1024 * 1024;
+const MAX_SIZE = 60 * 1024 * 1024;
 const MAX_CONCURRENT = 3;
 
 export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => void }) {
@@ -104,7 +104,7 @@ export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => v
             return false;
           }
           if (file.size > MAX_SIZE) {
-            toast.error(`${file.name}: exceeds 20MB limit`);
+            toast.error(`${file.name}: exceeds 60MB limit`);
             return false;
           }
           return true;
@@ -163,7 +163,7 @@ export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => v
             {isDragActive ? "Drop images here" : "Drag & drop images"}
           </p>
           <p className="text-xs text-muted-foreground">
-            or click to browse. JPEG, PNG, WebP, GIF, AVIF up to 20MB
+            or click to browse. JPEG, PNG, WebP, GIF, AVIF up to 60MB
           </p>
         </div>
       </div>

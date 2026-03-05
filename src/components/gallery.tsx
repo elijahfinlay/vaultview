@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import useSWR from "swr";
 import useSWRInfinite from "swr/infinite";
 import { UploadDropzone } from "./upload-dropzone";
@@ -19,10 +20,27 @@ interface GalleryProps {
 type SortOption = "date_desc" | "date_asc" | "name_asc" | "name_desc" | "size_desc" | "size_asc";
 
 export function Gallery({ userId, initialCount }: GalleryProps) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const urlQuery = searchParams.get("q") || "";
+  const [searchQuery, setSearchQuery] = useState(urlQuery);
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [sort, setSort] = useState<SortOption>("date_desc");
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [showUpload, setShowUpload] = useState(false);
+
+  // Debounced search query for API calls
+  const [debouncedQuery, setDebouncedQuery] = useState(searchQuery);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  // Sync search query when URL changes (e.g. from command palette)
+  useEffect(() => {
+    setSearchQuery(urlQuery);
+    setDebouncedQuery(urlQuery);
+  }, [urlQuery]);
 
   const { data: categoriesData, mutate: mutateCategories } = useSWR(
     "/api/categories",
@@ -32,6 +50,7 @@ export function Gallery({ userId, initialCount }: GalleryProps) {
   const getKey = (pageIndex: number, previousPageData: any) => {
     if (previousPageData && !previousPageData.hasMore) return null;
     const params = new URLSearchParams();
+    if (debouncedQuery.trim()) params.set("q", debouncedQuery.trim());
     if (selectedCategory) params.set("category", selectedCategory);
     params.set("sort", sort);
     if (previousPageData?.nextCursor) {
@@ -101,45 +120,88 @@ export function Gallery({ userId, initialCount }: GalleryProps) {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight">Gallery</h1>
-          <p className="text-sm text-muted-foreground">
-            {initialCount} {initialCount === 1 ? "image" : "images"}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value as SortOption)}
-            className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
-          >
-            <option value="date_desc">Newest first</option>
-            <option value="date_asc">Oldest first</option>
-            <option value="name_asc">Name A-Z</option>
-            <option value="name_desc">Name Z-A</option>
-            <option value="size_desc">Largest first</option>
-            <option value="size_asc">Smallest first</option>
-          </select>
-          <button
-            onClick={() => setShowUpload(!showUpload)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
-          >
-            <svg
-              className="w-3.5 h-3.5"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-              stroke="currentColor"
+      <div className="flex flex-col gap-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">Gallery</h1>
+            <p className="text-sm text-muted-foreground">
+              {initialCount} {initialCount === 1 ? "image" : "images"}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value as SortOption)}
+              className="text-xs px-3 py-1.5 rounded-lg border border-border bg-card text-foreground cursor-pointer"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 4.5v15m7.5-7.5h-15"
-              />
-            </svg>
-            Upload
-          </button>
+              <option value="date_desc">Newest first</option>
+              <option value="date_asc">Oldest first</option>
+              <option value="name_asc">Name A-Z</option>
+              <option value="name_desc">Name Z-A</option>
+              <option value="size_desc">Largest first</option>
+              <option value="size_asc">Smallest first</option>
+            </select>
+            <button
+              onClick={() => setShowUpload(!showUpload)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
+            >
+              <svg
+                className="w-3.5 h-3.5"
+                fill="none"
+                viewBox="0 0 24 24"
+                strokeWidth={2}
+                stroke="currentColor"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M12 4.5v15m7.5-7.5h-15"
+                />
+              </svg>
+              Upload
+            </button>
+          </div>
+        </div>
+
+        {/* Search bar */}
+        <div className="relative">
+          <svg
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none"
+            fill="none"
+            viewBox="0 0 24 24"
+            strokeWidth={1.5}
+            stroke="currentColor"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"
+            />
+          </svg>
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              // Clear URL param when typing
+              if (urlQuery) router.replace("/dashboard", { scroll: false });
+            }}
+            placeholder="Search by name, labels, description..."
+            className="w-full pl-9 pr-9 py-2 rounded-xl border border-border bg-card text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary/50 transition-all"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery("");
+                if (urlQuery) router.replace("/dashboard", { scroll: false });
+              }}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground cursor-pointer"
+            >
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
         </div>
       </div>
 
