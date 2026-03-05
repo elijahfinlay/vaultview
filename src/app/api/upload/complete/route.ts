@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { images } from "@/lib/schema";
+import { triggerAnalysis } from "@/lib/analyze";
 
 export async function POST(req: NextRequest) {
   const session = await auth();
@@ -11,6 +12,10 @@ export async function POST(req: NextRequest) {
 
   const { key, filename, contentType, size, width, height, blurhash } =
     await req.json();
+
+  const imageUrl = process.env.R2_PUBLIC_URL
+    ? `${process.env.R2_PUBLIC_URL}/${key}`
+    : key; // Fallback — will need R2_PUBLIC_URL for images to display
 
   const [image] = await db
     .insert(images)
@@ -23,21 +28,13 @@ export async function POST(req: NextRequest) {
       width,
       height,
       blurhash,
-      url: `${process.env.R2_PUBLIC_URL}/${key}`,
+      url: imageUrl,
     })
     .returning();
 
-  // Trigger AI analysis in the background (non-blocking)
-  const origin = req.nextUrl.origin;
-  fetch(`${origin}/api/ai/analyze`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Cookie: req.headers.get("cookie") || "",
-    },
-    body: JSON.stringify({ imageId: image.id }),
-  }).catch(() => {
-    // Fire-and-forget — AI analysis failures don't block upload
+  // Trigger AI analysis directly (no self-fetch, no cookie issues)
+  triggerAnalysis(image.id, session.user.id).catch(() => {
+    // Fire-and-forget — analysis failure doesn't block upload response
   });
 
   return NextResponse.json({ image });

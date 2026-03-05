@@ -20,16 +20,21 @@ export function CommandPalette() {
   const [loading, setLoading] = useState(false);
   const router = useRouter();
 
-  // Cmd+K shortcut
+  // Cmd+K shortcut + custom event from SearchTrigger
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const keyHandler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         setOpen((o) => !o);
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    const customHandler = () => setOpen(true);
+    window.addEventListener("keydown", keyHandler);
+    window.addEventListener("vaultview:open-search", customHandler);
+    return () => {
+      window.removeEventListener("keydown", keyHandler);
+      window.removeEventListener("vaultview:open-search", customHandler);
+    };
   }, []);
 
   // Debounced search
@@ -227,9 +232,7 @@ export function SearchTrigger() {
   return (
     <button
       onClick={() => {
-        window.dispatchEvent(
-          new KeyboardEvent("keydown", { key: "k", metaKey: true })
-        );
+        window.dispatchEvent(new CustomEvent("vaultview:open-search"));
       }}
       className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground text-xs transition-colors cursor-pointer"
     >

@@ -24,15 +24,25 @@ export async function GET(req: NextRequest) {
 
   const conditions = [eq(images.userId, session.user.id)];
 
-  // Full-text + trigram search
+  // Full-text + trigram search (with graceful fallback)
   if (q) {
-    conditions.push(
-      or(
-        sql`${images.searchVector} @@ plainto_tsquery('english', ${q})`,
-        sql`similarity(${images.originalName}, ${q}) > 0.1`,
-        sql`similarity(coalesce(${images.aiDescription}, ''), ${q}) > 0.1`
-      )!
-    );
+    try {
+      conditions.push(
+        or(
+          sql`${images.searchVector} @@ plainto_tsquery('english', ${q})`,
+          sql`similarity(${images.originalName}, ${q}) > 0.1`,
+          sql`similarity(coalesce(${images.aiDescription}, ''), ${q}) > 0.1`
+        )!
+      );
+    } catch {
+      // pg_trgm not available — fall back to ILIKE
+      conditions.push(
+        or(
+          sql`${images.originalName} ILIKE ${'%' + q + '%'}`,
+          sql`${images.aiDescription} ILIKE ${'%' + q + '%'}`
+        )!
+      );
+    }
   }
 
   // Category filter
@@ -46,9 +56,33 @@ export async function GET(req: NextRequest) {
     conditions.push(inArray(images.id, imageIdsInCategory));
   }
 
-  // Cursor-based pagination
+  // Cursor-based pagination — decode cursor based on sort field
   if (cursor) {
-    conditions.push(sql`${images.createdAt} < ${cursor}`);
+    try {
+      const cursorData = JSON.parse(cursor);
+      switch (sort) {
+        case "date_asc":
+          conditions.push(sql`${images.createdAt} > ${cursorData.createdAt}`);
+          break;
+        case "name_asc":
+          conditions.push(sql`${images.originalName} > ${cursorData.originalName}`);
+          break;
+        case "name_desc":
+          conditions.push(sql`${images.originalName} < ${cursorData.originalName}`);
+          break;
+        case "size_asc":
+          conditions.push(sql`${images.size} > ${cursorData.size}`);
+          break;
+        case "size_desc":
+          conditions.push(sql`${images.size} < ${cursorData.size}`);
+          break;
+        default: // date_desc
+          conditions.push(sql`${images.createdAt} < ${cursorData.createdAt}`);
+          break;
+      }
+    } catch {
+      // Invalid cursor — ignore pagination
+    }
   }
 
   // Sort
@@ -69,16 +103,47 @@ export async function GET(req: NextRequest) {
     }
   })();
 
-  const results = await db
-    .select()
-    .from(images)
-    .where(and(...conditions))
-    .orderBy(orderBy)
-    .limit(limit + 1);
+  let results;
+  try {
+    results = await db
+      .select()
+      .from(images)
+      .where(and(...conditions))
+      .orderBy(orderBy)
+      .limit(limit + 1);
+  } catch (err) {
+    // If pg_trgm query fails, retry without similarity
+    if (q && String(err).includes("similarity")) {
+      const fallbackConditions = [eq(images.userId, session.user.id)];
+      fallbackConditions.push(
+        or(
+          sql`${images.originalName} ILIKE ${'%' + q + '%'}`,
+          sql`${images.aiDescription} ILIKE ${'%' + q + '%'}`
+        )!
+      );
+      results = await db
+        .select()
+        .from(images)
+        .where(and(...fallbackConditions))
+        .orderBy(orderBy)
+        .limit(limit + 1);
+    } else {
+      throw err;
+    }
+  }
 
   const hasMore = results.length > limit;
   const items = results.slice(0, limit);
-  const nextCursor = hasMore ? items[items.length - 1]?.createdAt?.toISOString() : null;
+
+  // Encode cursor with all sort fields for correct pagination
+  const lastItem = items[items.length - 1];
+  const nextCursor = hasMore && lastItem
+    ? JSON.stringify({
+        createdAt: lastItem.createdAt?.toISOString(),
+        originalName: lastItem.originalName,
+        size: lastItem.size,
+      })
+    : null;
 
   return NextResponse.json({
     images: items,
@@ -104,7 +169,7 @@ export async function DELETE(req: NextRequest) {
     return NextResponse.json({ error: "Image not found" }, { status: 404 });
   }
 
-  // Optionally delete from R2 (fire-and-forget)
+  // Delete from R2 (fire-and-forget)
   try {
     const { deleteFromR2 } = await import("@/lib/r2");
     await deleteFromR2(deleted.filename);

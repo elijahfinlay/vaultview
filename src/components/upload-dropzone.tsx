@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
 import { extractImageData } from "@/lib/blurhash";
 import { toast } from "sonner";
@@ -26,6 +26,7 @@ const MAX_CONCURRENT = 3;
 
 export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => void }) {
   const [queue, setQueue] = useState<UploadItem[]>([]);
+  const activeCount = useRef(0);
 
   const updateItem = (id: string, updates: Partial<UploadItem>) => {
     setQueue((prev) =>
@@ -93,30 +94,26 @@ export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => v
         const message = err instanceof Error ? err.message : "Upload failed";
         updateItem(item.id, { status: "error", error: message });
         toast.error(`Failed: ${item.file.name}`, { description: message });
+      } finally {
+        activeCount.current--;
+        // Trigger re-render so useEffect picks up next pending items
+        setQueue((prev) => [...prev]);
       }
     },
     [onUploadComplete]
   );
 
-  const processQueue = useCallback(
-    async (items: UploadItem[]) => {
-      const pending = items.filter((i) => i.status === "pending");
-      const active = items.filter((i) => i.status === "uploading" || i.status === "processing");
+  // useEffect-driven concurrency — starts pending uploads when slots free up
+  useEffect(() => {
+    const pending = queue.filter((i) => i.status === "pending");
+    const slotsAvailable = MAX_CONCURRENT - activeCount.current;
 
-      const slotsAvailable = MAX_CONCURRENT - active.length;
-      const toStart = pending.slice(0, slotsAvailable);
-
-      for (const item of toStart) {
-        uploadFile(item).then(() => {
-          setQueue((prev) => {
-            processQueue(prev);
-            return prev;
-          });
-        });
-      }
-    },
-    [uploadFile]
-  );
+    const toStart = pending.slice(0, slotsAvailable);
+    for (const item of toStart) {
+      activeCount.current++;
+      uploadFile(item);
+    }
+  }, [queue, uploadFile]);
 
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -140,14 +137,9 @@ export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => v
         }));
 
       if (newItems.length === 0) return;
-
-      setQueue((prev) => {
-        const next = [...prev, ...newItems];
-        setTimeout(() => processQueue(next), 0);
-        return next;
-      });
+      setQueue((prev) => [...prev, ...newItems]);
     },
-    [processQueue]
+    []
   );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -158,9 +150,7 @@ export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => v
     multiple: true,
   });
 
-  const activeUploads = queue.filter(
-    (i) => i.status !== "done" || Date.now() - 2000 < 0
-  );
+  const visibleItems = queue.filter((i) => i.status !== "done");
 
   return (
     <div className="space-y-4">
@@ -199,51 +189,49 @@ export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => v
       </div>
 
       <AnimatePresence>
-        {queue.filter((i) => i.status !== "done").length > 0 && (
+        {visibleItems.length > 0 && (
           <motion.div
             initial={{ opacity: 0, height: 0 }}
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             className="space-y-2"
           >
-            {queue
-              .filter((i) => i.status !== "done")
-              .map((item) => (
-                <div
-                  key={item.id}
-                  className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border"
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate">
-                      {item.file.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {item.status === "error"
-                        ? item.error
-                        : item.status === "processing"
-                        ? "Processing..."
-                        : item.status === "uploading"
-                        ? "Uploading..."
-                        : "Waiting..."}
-                    </p>
-                  </div>
-                  {item.status !== "error" && (
-                    <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
-                      <motion.div
-                        className="h-full bg-primary rounded-full"
-                        initial={{ width: 0 }}
-                        animate={{ width: `${item.progress}%` }}
-                        transition={{ duration: 0.3 }}
-                      />
-                    </div>
-                  )}
-                  {item.status === "error" && (
-                    <span className="text-xs text-destructive font-medium">
-                      Failed
-                    </span>
-                  )}
+            {visibleItems.map((item) => (
+              <div
+                key={item.id}
+                className="flex items-center gap-3 p-3 rounded-xl bg-card border border-border"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {item.file.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {item.status === "error"
+                      ? item.error
+                      : item.status === "processing"
+                      ? "Processing..."
+                      : item.status === "uploading"
+                      ? "Uploading..."
+                      : "Waiting..."}
+                  </p>
                 </div>
-              ))}
+                {item.status !== "error" && (
+                  <div className="w-20 h-1.5 rounded-full bg-muted overflow-hidden">
+                    <motion.div
+                      className="h-full bg-primary rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${item.progress}%` }}
+                      transition={{ duration: 0.3 }}
+                    />
+                  </div>
+                )}
+                {item.status === "error" && (
+                  <span className="text-xs text-destructive font-medium">
+                    Failed
+                  </span>
+                )}
+              </div>
+            ))}
           </motion.div>
         )}
       </AnimatePresence>
