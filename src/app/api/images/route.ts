@@ -1,17 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { auth } from "@/auth";
 import { db } from "@/lib/db";
 import { images, imageCategories, categories } from "@/lib/schema";
 import { eq, and, desc, asc, sql, or, inArray } from "drizzle-orm";
+import { DEFAULT_USER_ID } from "@/lib/constants";
 
 const PAGE_SIZE = 30;
 
 export async function GET(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { searchParams } = req.nextUrl;
   const q = searchParams.get("q");
   const category = searchParams.get("category");
@@ -22,27 +17,17 @@ export async function GET(req: NextRequest) {
     100
   );
 
-  const conditions = [eq(images.userId, session.user.id)];
+  const conditions = [eq(images.userId, DEFAULT_USER_ID)];
 
   // Full-text + trigram search (with graceful fallback)
   if (q) {
-    try {
-      conditions.push(
-        or(
-          sql`${images.searchVector} @@ plainto_tsquery('english', ${q})`,
-          sql`similarity(${images.originalName}, ${q}) > 0.1`,
-          sql`similarity(coalesce(${images.aiDescription}, ''), ${q}) > 0.1`
-        )!
-      );
-    } catch {
-      // pg_trgm not available — fall back to ILIKE
-      conditions.push(
-        or(
-          sql`${images.originalName} ILIKE ${'%' + q + '%'}`,
-          sql`${images.aiDescription} ILIKE ${'%' + q + '%'}`
-        )!
-      );
-    }
+    conditions.push(
+      or(
+        sql`${images.searchVector} @@ plainto_tsquery('english', ${q})`,
+        sql`similarity(${images.originalName}, ${q}) > 0.1`,
+        sql`similarity(coalesce(${images.aiDescription}, ''), ${q}) > 0.1`
+      )!
+    );
   }
 
   // Category filter
@@ -56,7 +41,7 @@ export async function GET(req: NextRequest) {
     conditions.push(inArray(images.id, imageIdsInCategory));
   }
 
-  // Cursor-based pagination — decode cursor based on sort field
+  // Cursor-based pagination
   if (cursor) {
     try {
       const cursorData = JSON.parse(cursor);
@@ -76,12 +61,12 @@ export async function GET(req: NextRequest) {
         case "size_desc":
           conditions.push(sql`${images.size} < ${cursorData.size}`);
           break;
-        default: // date_desc
+        default:
           conditions.push(sql`${images.createdAt} < ${cursorData.createdAt}`);
           break;
       }
     } catch {
-      // Invalid cursor — ignore pagination
+      // Invalid cursor
     }
   }
 
@@ -112,9 +97,8 @@ export async function GET(req: NextRequest) {
       .orderBy(orderBy)
       .limit(limit + 1);
   } catch (err) {
-    // If pg_trgm query fails, retry without similarity
     if (q && String(err).includes("similarity")) {
-      const fallbackConditions = [eq(images.userId, session.user.id)];
+      const fallbackConditions = [eq(images.userId, DEFAULT_USER_ID)];
       fallbackConditions.push(
         or(
           sql`${images.originalName} ILIKE ${'%' + q + '%'}`,
@@ -135,7 +119,6 @@ export async function GET(req: NextRequest) {
   const hasMore = results.length > limit;
   const items = results.slice(0, limit);
 
-  // Encode cursor with all sort fields for correct pagination
   const lastItem = items[items.length - 1];
   const nextCursor = hasMore && lastItem
     ? JSON.stringify({
@@ -153,23 +136,17 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await auth();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id } = await req.json();
 
   const [deleted] = await db
     .delete(images)
-    .where(and(eq(images.id, id), eq(images.userId, session.user.id)))
+    .where(and(eq(images.id, id), eq(images.userId, DEFAULT_USER_ID)))
     .returning();
 
   if (!deleted) {
     return NextResponse.json({ error: "Image not found" }, { status: 404 });
   }
 
-  // Delete from R2 (fire-and-forget)
   try {
     const { deleteFromR2 } = await import("@/lib/r2");
     await deleteFromR2(deleted.filename);

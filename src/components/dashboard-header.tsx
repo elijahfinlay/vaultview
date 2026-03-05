@@ -1,15 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import Image from "next/image";
-import { signOut } from "next-auth/react";
 import { SearchTrigger } from "./command-palette";
 import { ThemeToggle } from "./theme-toggle";
-import type { User } from "next-auth";
 
-export function DashboardHeader({ user }: { user: User }) {
-  const [menuOpen, setMenuOpen] = useState(false);
-
+export function DashboardHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-xl">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
@@ -37,51 +31,6 @@ export function DashboardHeader({ user }: { user: User }) {
         <div className="flex items-center gap-3">
           <SearchTrigger />
           <ThemeToggle />
-
-          <div className="relative">
-            <button
-              onClick={() => setMenuOpen(!menuOpen)}
-              className="flex items-center gap-2 p-1.5 rounded-lg hover:bg-muted transition-colors cursor-pointer"
-            >
-              {user.image ? (
-                <Image
-                  src={user.image}
-                  alt={user.name || "Avatar"}
-                  width={28}
-                  height={28}
-                  className="rounded-full"
-                />
-              ) : (
-                <div className="w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center text-xs font-medium text-primary">
-                  {user.name?.[0] || user.email?.[0] || "?"}
-                </div>
-              )}
-              <span className="text-sm hidden sm:block">{user.name}</span>
-            </button>
-
-            {menuOpen && (
-              <>
-                <div
-                  className="fixed inset-0"
-                  onClick={() => setMenuOpen(false)}
-                />
-                <div className="absolute right-0 mt-1 w-48 rounded-xl border border-border bg-card shadow-lg py-1 z-50">
-                  <div className="px-3 py-2 border-b border-border">
-                    <p className="text-sm font-medium truncate">{user.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {user.email}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => signOut({ callbackUrl: "/login" })}
-                    className="w-full text-left px-3 py-2 text-sm text-destructive hover:bg-muted transition-colors cursor-pointer"
-                  >
-                    Sign out
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
         </div>
       </div>
     </header>
