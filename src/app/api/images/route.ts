@@ -148,8 +148,8 @@ export async function DELETE(req: NextRequest) {
   }
 
   try {
-    const { deleteFromR2 } = await import("@/lib/r2");
-    await deleteFromR2(deleted.filename);
+    const { deleteFromStorage } = await import("@/lib/storage");
+    await deleteFromStorage(deleted.url);
   } catch {
     // Non-critical
   }

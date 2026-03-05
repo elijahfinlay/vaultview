@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useEffect, useRef } from "react";
 import { useDropzone } from "react-dropzone";
+import { upload } from "@vercel/blob/client";
 import { extractImageData } from "@/lib/blurhash";
 import { toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
@@ -39,45 +40,24 @@ export function UploadDropzone({ onUploadComplete }: { onUploadComplete: () => v
       try {
         updateItem(item.id, { status: "uploading", progress: 10 });
 
-        // 1. Get presigned URL
-        const presignRes = await fetch("/api/upload/presign", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            filename: item.file.name,
-            contentType: item.file.type,
-            size: item.file.size,
-          }),
+        // 1. Upload directly to Vercel Blob via client upload
+        const blob = await upload(item.file.name, item.file, {
+          access: "public",
+          handleUploadUrl: "/api/upload",
         });
 
-        if (!presignRes.ok) {
-          const err = await presignRes.json();
-          throw new Error(err.error || "Failed to get upload URL");
-        }
-
-        const { presignedUrl, key } = await presignRes.json();
-        updateItem(item.id, { progress: 30 });
-
-        // 2. Upload directly to R2
-        const uploadRes = await fetch(presignedUrl, {
-          method: "PUT",
-          headers: { "Content-Type": item.file.type },
-          body: item.file,
-        });
-
-        if (!uploadRes.ok) throw new Error("Upload to storage failed");
         updateItem(item.id, { progress: 70, status: "processing" });
 
-        // 3. Extract image data (blurhash + dimensions)
+        // 2. Extract image data (blurhash + dimensions)
         const imageData = await extractImageData(item.file);
         updateItem(item.id, { progress: 85 });
 
-        // 4. Complete upload (create DB row + trigger AI)
+        // 3. Complete upload (create DB row + trigger AI)
         const completeRes = await fetch("/api/upload/complete", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            key,
+            url: blob.url,
             filename: item.file.name,
             contentType: item.file.type,
             size: item.file.size,

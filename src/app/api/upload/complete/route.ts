@@ -5,29 +5,29 @@ import { triggerAnalysis } from "@/lib/analyze";
 import { DEFAULT_USER_ID } from "@/lib/constants";
 
 export async function POST(req: NextRequest) {
-  const { key, filename, contentType, size, width, height, blurhash } =
+  const { url, filename, contentType, size, width, height, blurhash } =
     await req.json();
 
-  const imageUrl = process.env.R2_PUBLIC_URL
-    ? `${process.env.R2_PUBLIC_URL}/${key}`
-    : key;
+  if (!url) {
+    return NextResponse.json({ error: "Missing blob URL" }, { status: 400 });
+  }
 
   const [image] = await db
     .insert(images)
     .values({
       userId: DEFAULT_USER_ID,
-      filename: key,
+      filename: url, // Store the full blob URL as filename for deletion
       originalName: filename,
       mimeType: contentType,
       size,
       width,
       height,
       blurhash,
-      url: imageUrl,
+      url,
     })
     .returning();
 
-  // Trigger AI analysis directly
+  // Trigger AI analysis directly (non-blocking)
   triggerAnalysis(image.id, DEFAULT_USER_ID).catch(() => {});
 
   return NextResponse.json({ image });
